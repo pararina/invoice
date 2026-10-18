@@ -101,6 +101,7 @@
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
             </button>
             <div class="flex gap-2">
+                <span id="save-status" class="text-xs self-center mr-2 text-gray-500"></span>
                 
                 <!-- ★PDF保存（実態は最適化されたブラウザ印刷機能） -->
                 <button onclick="window.print()" class="flex items-center gap-2 px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow-sm text-sm font-bold transition-colors" title="PDFとして保存します">
@@ -116,7 +117,7 @@
 
                 <button id="save-btn" onclick="handleSave()" class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded shadow-sm text-sm font-medium transition-colors ml-2">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                    GASへ保存
+                    今すぐ保存
                 </button>
             </div>
         </div>
@@ -296,7 +297,80 @@
         let currentId = null;
         let isSidebarOpen = true;
         let deleteTargetId = null;
-
+        
+        // --- 自動保存 ---
+        const AUTOSAVE_DELAY = 2000;      // 入力が止まってから保存するまでの待ち時間(ミリ秒)
+        let autoSaveTimer = null;
+        let isSaving = false;
+        const dirtyIds = new Set();       // 未保存の請求書ID
+        
+        function setSaveStatus(status) {
+            const el = document.getElementById('save-status');
+            if (!el) return;
+            const map = {
+                dirty:  ['未保存の変更があります', 'text-amber-600'],
+                saving: ['保存中...',             'text-blue-600'],
+                saved:  ['✓ 保存済み',            'text-emerald-600'],
+                error:  ['保存失敗（再試行します）', 'text-red-600']
+            };
+            const [text, color] = map[status];
+            el.textContent = text;
+            el.className = 'text-xs self-center mr-2 ' + color;
+        }
+        
+        function scheduleAutoSave(id) {
+            dirtyIds.add(id);
+            setSaveStatus('dirty');
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(flushAutoSave, AUTOSAVE_DELAY);
+        }
+        
+        async function flushAutoSave() {
+            // 保存中なら、終わってからもう一度試す（同じIDの二重追加を防ぐ）
+            if (isSaving) { autoSaveTimer = setTimeout(flushAutoSave, 500); return; }
+            if (dirtyIds.size === 0) return;
+            if (!GAS_API_URL || GAS_API_URL === 'YOUR_WEB_APP_URL_HERE') return;
+        
+            isSaving = true;
+            setSaveStatus('saving');
+            const ids = [...dirtyIds];
+            dirtyIds.clear();
+            let failed = false;
+        
+            for (const id of ids) {
+                const inv = invoices.find(i => i.id === id);
+                if (!inv) continue;
+                try {
+                    const result = await apiCall('saveInvoiceData', inv);
+                    if (result.status !== 'success') throw new Error(result.message);
+                } catch (e) {
+                    console.error('自動保存エラー:', e);
+                    failed = true;
+                    dirtyIds.add(id);   // 失敗分は次回に再送
+                }
+            }
+        
+            isSaving = false;
+            try { localStorage.setItem('invoiceHubData', JSON.stringify(invoices)); } catch (e) {}
+        
+            if (failed) {
+                setSaveStatus('error');
+                autoSaveTimer = setTimeout(flushAutoSave, 5000);
+            } else if (dirtyIds.size > 0) {
+                setSaveStatus('dirty');   // 保存中に新しい入力があった場合
+            } else {
+                setSaveStatus('saved');
+            }
+        }
+        
+        // 未保存のままタブを閉じようとしたら警告
+        window.addEventListener('beforeunload', (e) => {
+            if (dirtyIds.size > 0 || isSaving) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+        
             async function initApp() {
             // 初期表示用（読み込み中のスピナー表示）
             document.getElementById('sidebar-list').innerHTML = '<div class="p-8 text-slate-400 text-sm text-center flex flex-col items-center justify-center h-full">データを読み込んでいます...<br><svg class="animate-spin mt-3 h-6 w-6 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>';
@@ -466,8 +540,9 @@
         function removeItemRow(itemId) {
             const inv = invoices.find(i => i.id === currentId);
             if (inv) {
-                inv.items = inv.items.filter(item => item.id !== itemId);
-                renderInvoice();
+            inv.items = inv.items.filter(item => item.id !== itemId);
+            renderInvoice();
+            scheduleAutoSave(currentId);
             }
         }
 
@@ -509,6 +584,7 @@
                     }
                 }
                 renderSidebar();
+                scheduleAutoSave(currentId);
             });
         }
 
@@ -555,14 +631,16 @@
             newInvoice.date = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
             invoices.unshift(newInvoice);
             setCurrentId(newId);
+            scheduleAutoSave(newId);
         }
 
         function handleToggleStatus(id, e) {
             e.stopPropagation();
             const inv = invoices.find(i => i.id === id);
             if (inv) {
-                inv.status = inv.status === '未入金' ? '入金済' : '未入金';
-                renderSidebar();
+                    inv.status = inv.status === '未入金' ? '入金済' : '未入金';
+                    renderSidebar();
+                    scheduleAutoSave(id);
             }
         }
 
@@ -591,42 +669,9 @@
         }
 
         async function handleSave() {
-            try {
-                localStorage.setItem('invoiceHubData', JSON.stringify(invoices));
-                
-                const currentInvoice = invoices.find(i => i.id === currentId);
-                const btn = document.getElementById('save-btn');
-                const originalBtnHtml = btn.innerHTML;
-                
-                btn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>保存中...`;
-                btn.disabled = true;
-
-                if (!GAS_API_URL || GAS_API_URL === 'YOUR_WEB_APP_URL_HERE') {
-                    setTimeout(() => {
-                        btn.innerHTML = originalBtnHtml;
-                        btn.disabled = false;
-                        alert("ブラウザ（ローカル）に保存しました。\n※スプレッドシートに保存するにはコード内の GAS_API_URL を設定してください。");
-                    }, 500);
-                    return;
-                }
-                
-                try {
-                    const result = await apiCall('saveInvoiceData', currentInvoice);
-                    if (result.status === 'success') {
-                        alert("内容をスプレッドシートに保存しました！");
-                    } else {
-                        throw new Error(result.message);
-                    }
-                } catch (error) {
-                    console.error(error);
-                    alert("スプレッドシートへの保存に失敗しました。");
-                } finally {
-                    btn.innerHTML = originalBtnHtml;
-                    btn.disabled = false;
-                }
-            } catch(e) {
-                alert("保存エラーが発生しました。");
-            }
+            dirtyIds.add(currentId);          // 表示中の請求書は必ず保存対象にする
+            clearTimeout(autoSaveTimer);
+            await flushAutoSave();
         }
 
         // SheetJSを用いたExcelエクスポート機能（フロントエンド完結）
