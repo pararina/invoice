@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice Hub (請求書ツール)</title>
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS (Excel出力用ライブラリ) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+        
+        body { font-family: 'Noto Sans JP', sans-serif; }
+        
+        /* ★最高品質PDF出力のための印刷用スタイル */
+        @media print {
+            body * { visibility: hidden; }
+            #printable-invoice, #printable-invoice * { visibility: visible; }
+            
+            /* A4用紙にピッタリはめ込む設定 */
+            #printable-invoice {
+                position: absolute; 
+                left: 0; 
+                top: 0; 
+                width: 210mm; 
+                /* 印刷時の用紙内の余白をここでコントロールします */
+                padding: 15mm 20mm !important; 
+                margin: 0; 
+                box-shadow: none; 
+                background: white;
+                box-sizing: border-box;
+            }
+
+            /* ★ここでブラウザデフォルトのヘッダー(日付)・フッター(URL)を強制的に消します */
+            @page {
+                size: A4 portrait;
+                margin: 0; 
+            }
+            
+            .no-print { display: none !important; }
+            
+            /* 印刷時は入力枠の黄色いハイライトなどを消す */
+            .edit-input { 
+                border-color: transparent !important; 
+                padding: 0 !important; 
+                margin: 0 !important; 
+                background: transparent !important;
+            }
+            
+            /* 未入力の「項目名」などのプレースホルダー印字を防ぐ */
+            input::placeholder { color: transparent; }
+            textarea::placeholder { color: transparent; }
+        }
+
+        /* 編集可能な入力フィールドの共通スタイル */
+        .edit-input {
+            width: 100%;
+            background-color: transparent;
+            outline: none;
+            border: 1px solid transparent;
+            border-radius: 0.25rem;
+            padding: 0.25rem;
+            margin: -0.25rem;
+            transition: background-color 0.2s, border-color 0.2s;
+            color: inherit;
+            font: inherit;
+        }
+        .edit-input:hover, .edit-input:focus {
+            background-color: #fef08a; /* yellow-100 */
+        }
+        .edit-input:hover {
+            border-color: #fde047; /* yellow-300 */
+        }
+        .edit-input:focus {
+            border-color: #facc15; /* yellow-400 */
+        }
+    </style>
+</head>
+<body class="flex h-screen bg-gray-300 font-sans overflow-hidden">
+
+    <!-- サイドバー（リスト） -->
+    <div id="sidebar" class="bg-slate-900 text-white flex flex-col transition-all duration-300 ease-in-out z-20 no-print w-80 shrink-0">
+        <div class="p-4 border-b border-slate-700 flex justify-between items-center min-w-[320px]">
+            <h1 class="text-lg font-bold">請求書リスト</h1>
+            <button onclick="handleCreateNew()" class="bg-blue-600 hover:bg-blue-500 p-2 rounded text-sm flex items-center gap-1 transition-colors shadow-sm">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+                新規
+            </button>
+        </div>
+        <div id="sidebar-list" class="flex-1 overflow-y-auto min-w-[320px]">
+            <!-- リストアイテムがJSで動的に挿入されます -->
+        </div>
+    </div>
+
+    <!-- メインエリア（プレビュー画面） -->
+    <div class="flex-1 flex flex-col relative h-full min-w-[600px]">
+        <!-- 上部ヘッダー -->
+        <div class="h-14 bg-white border-b flex items-center justify-between px-4 shadow-sm no-print shrink-0">
+            <button onclick="toggleSidebar()" class="p-2 hover:bg-gray-100 rounded text-gray-600 transition-colors">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <div class="flex gap-2">
+                
+                <!-- ★PDF保存（実態は最適化されたブラウザ印刷機能） -->
+                <button onclick="window.print()" class="flex items-center gap-2 px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow-sm text-sm font-bold transition-colors" title="PDFとして保存します">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    PDFで保存 (高画質)
+                </button>
+
+                <!-- ★SheetJSによるExcel出力ボタン -->
+                <button onclick="exportToExcel()" class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded shadow-sm text-sm font-medium transition-colors ml-2" title="リストをExcel出力">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    Excel出力
+                </button>
+
+                <button id="save-btn" onclick="handleSave()" class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded shadow-sm text-sm font-medium transition-colors ml-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                    GASへ保存
+                </button>
+            </div>
+        </div>
+
+        <!-- 請求書キャンバスエリア -->
+        <div class="flex-1 overflow-auto p-8 flex justify-center items-start relative">
+            
+            <div id="printable-invoice" class="bg-white w-[210mm] min-h-[297mm] p-12 shadow-2xl text-gray-900 relative">
+                
+                <div class="flex justify-between mb-8">
+                    <!-- 左側：宛先と概要 -->
+                    <div class="w-[60%]">
+                        <!-- ★修正: 宛名の横幅を大きく広げました (w-fullに変更) -->
+                        <div class="mb-8 border-b border-black w-full pb-1">
+                            <input type="text" id="inv-clientName" name="clientName" class="edit-input text-xl font-bold" />
+                        </div>
+                        <p class="text-sm mb-4">下記のとおり、御請求申し上げます。</p>
+                        
+                        <table class="w-full text-sm border-collapse border border-black mb-6">
+                            <tbody>
+                                <tr>
+                                    <th class="border border-black bg-gray-100 p-2 w-[30%] text-left font-normal">件名</th>
+                                    <td class="border border-black p-2">
+                                        <input type="text" id="inv-subject" name="subject" class="edit-input" />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th class="border border-black bg-gray-100 p-2 text-left font-normal">支払期限</th>
+                                    <td class="border border-black p-2">
+                                        <input type="text" id="inv-paymentDeadline" name="paymentDeadline" class="edit-input" />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th class="border border-black bg-gray-100 p-2 text-left font-normal align-top">振込先</th>
+                                    <td class="border border-black p-2 relative">
+                                        <!-- textareaのトリミング防止対策の対象 -->
+                                        <textarea id="inv-bankInfo" name="bankInfo" rows="3" class="edit-input resize-none leading-relaxed"></textarea>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="flex items-end gap-4 mt-8">
+                            <span class="text-base font-bold pb-1">合計</span>
+                            <div class="border-b-2 border-black pb-1 px-4 flex items-center">
+                                <span class="text-4xl font-bold mr-2">¥</span>
+                                <span id="totalAmount1" class="text-4xl font-bold tracking-wider">0 -</span>
+                            </div>
+                            <span class="text-sm pb-1">（税込）</span>
+                        </div>
+                    </div>
+
+                    <!-- 右側：請求書情報と発行者 -->
+                    <div class="w-[30%] text-sm">
+                        <h2 class="text-3xl font-bold text-center tracking-[0.3em] mb-6">請求書</h2>
+                        <div class="flex justify-between mb-1 items-center">
+                            <span>No.</span>
+                            <input type="text" id="inv-invoiceNo" name="invoiceNo" class="edit-input text-right w-32" />
+                        </div>
+                        <div class="flex justify-between mb-6 items-center">
+                            <span>請求日</span>
+                            <input type="text" id="inv-date" name="date" class="edit-input text-right w-32" />
+                        </div>
+                        
+                        <div class="mt-4">
+                            <input type="text" id="inv-publisherName" name="publisherName" class="edit-input font-bold text-lg mb-2" />
+                            <div class="leading-relaxed">
+                                <input type="text" id="inv-publisherZip" name="publisherZip" class="edit-input" />
+                                <input type="text" id="inv-publisherAddress1" name="publisherAddress1" class="edit-input" />
+                                <input type="text" id="inv-publisherAddress2" name="publisherAddress2" class="edit-input" />
+                                <input type="text" id="inv-publisherTel" name="publisherTel" class="edit-input mt-1" />
+                                <input type="text" id="inv-publisherEmail" name="publisherEmail" class="edit-input" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 明細テーブル -->
+                <div class="mb-2 font-bold text-sm flex justify-between items-end">
+                    <span>① 業務内訳</span>
+                    <button onclick="addItemRow()" class="no-print text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+                        行を追加
+                    </button>
+                </div>
+                <table class="w-full text-sm border-collapse border border-black mb-4">
+                    <thead>
+                        <tr class="bg-gray-100 text-center">
+                            <th class="border border-black p-2 w-[25%] font-normal">項目</th>
+                            <th class="border border-black p-2 w-[55%] font-normal">内容・備考</th>
+                            <th class="border border-black p-2 w-[20%] font-normal">金額（税込）</th>
+                        </tr>
+                    </thead>
+                    <tbody id="invoice-items">
+                        <!-- JSで明細行が挿入されます -->
+                    </tbody>
+                </table>
+
+                <!-- 合計計算エリア -->
+                <div class="flex justify-end mb-10">
+                    <table class="w-[40%] text-sm border-collapse border border-black">
+                        <tbody>
+                            <tr>
+                                <th class="border border-black bg-gray-100 p-2 text-center w-1/2 font-normal">小計</th>
+                                <td id="totalAmount2" class="border border-black p-2 text-right">0</td>
+                            </tr>
+                            <tr>
+                                <th class="border border-black bg-gray-100 p-2 text-center font-normal">消費税等</th>
+                                <td class="border border-black p-2 text-right text-gray-500 text-xs text-center">内税のため0</td>
+                            </tr>
+                            <tr>
+                                <th class="border border-black bg-gray-100 p-2 text-center font-bold">合計</th>
+                                <td id="totalAmount3" class="border border-black p-2 text-right font-bold">0</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 備考欄 -->
+                <div class="text-sm border border-black p-2 min-h-[120px] relative">
+                    <div class="font-bold mb-1 px-2">備考</div>
+                    <!-- textareaのトリミング防止対策の対象 -->
+                    <textarea id="inv-note" name="note" rows="4" class="edit-input resize-none leading-relaxed px-2 w-[calc(100%-16px)] mx-2"></textarea>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 削除確認モーダル -->
+    <div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 no-print">
+        <div class="bg-white rounded-lg p-6 w-96 shadow-xl transform transition-all">
+            <h3 class="text-lg font-bold mb-4 text-gray-900">請求書の削除</h3>
+            <p class="text-gray-600 mb-6 text-sm">
+                この請求書を削除してもよろしいですか？<br/>
+                この操作は取り消せません。
+            </p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeDeleteModal()" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded text-sm font-medium transition-colors">
+                    キャンセル
+                </button>
+                <button onclick="executeDelete()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium transition-colors shadow-sm">
+                    削除する
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript ロジック -->
+    <script>
+        // --- 初期ダミーデータ（テンプレート） ---
+        const defaultTemplate = {
+            id: '',
+            status: '未入金',
+            clientName: '株式会社TONE PALETTE 御中',
+            subject: 'インフルエンサー施策 PR業務および動画制作',
+            paymentDeadline: '2026年3月31日',
+            bankInfo: '〇〇銀行 〇〇支店\n普通 1234567\n名義：〇〇 〇〇',
+            invoiceNo: '1001',
+            date: '2026年2月28日',
+            publisherName: 'ぱ',
+            publisherZip: '〒000-0000',
+            publisherAddress1: '東京都〇〇区〇〇 1-2-3',
+            publisherAddress2: '〇〇マンション 101',
+            publisherTel: 'TEL: 090-0000-0000',
+            publisherEmail: 'Email: sample@example.com',
+            items: [
+                { id: 1, name: '基本PR料', desc: '想定5万再生、再生単価1円想定', price: '50000' },
+                { id: 2, name: '製作・作業費', desc: '動画1本、30秒以下尺想定', price: '20000' }
+            ],
+            note: '・本業務の報酬は税込金額となります。\n・振込手数料は貴社（株式会社TONE PALETTE様）にてご負担をお願いいたします。\n・お支払いは、請求書受領後、月末締め翌月末払いにてお願いいたします。'
+        };
+
+        const initialInvoices = [
+            { ...JSON.parse(JSON.stringify(defaultTemplate)), id: '1', invoiceNo: '1001', date: '2026年2月28日', status: '未入金' }
+        ];
+
+        // --- ★ここに先ほど取得したGASのウェブアプリURLを貼り付けてください ---
+        const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbzsZmAIIgiipxtM9cmPpdXsnPeUDO_H4qxf1t71eELV4oVg5LNLkZPZ39MlmWA_E5Dg/exec';
+
+        let invoices = [];
+        let currentId = '1';
+        let isSidebarOpen = true;
+        let deleteTargetId = null;
+
+        function initApp() {
+            const savedData = localStorage.getItem('invoiceHubData');
+            if (savedData) {
+                try {
+                    invoices = JSON.parse(savedData);
+                    if (invoices.length > 0) currentId = invoices[0].id;
+                } catch (e) { invoices = [...initialInvoices]; }
+            } else {
+                invoices = [...initialInvoices];
+            }
+            renderSidebar();
+            renderInvoice();
+            setupInputListeners();
+        }
+
+        // 印刷時にtextareaの文字が枠から溢れて切れるのを防ぐ処理
+        window.addEventListener('beforeprint', () => {
+            document.querySelectorAll('textarea.edit-input').forEach(textarea => {
+                let printDiv = textarea.nextElementSibling;
+                if (!printDiv || !printDiv.classList.contains('print-mirror')) {
+                    printDiv = document.createElement('div');
+                    printDiv.className = textarea.className;
+                    printDiv.classList.add('print-mirror');
+                    printDiv.classList.remove('resize-none', 'edit-input');
+                    printDiv.style.whiteSpace = 'pre-wrap';
+                    printDiv.style.wordBreak = 'break-word';
+                    textarea.parentNode.insertBefore(printDiv, textarea.nextSibling);
+                }
+                printDiv.innerText = textarea.value;
+                textarea.style.display = 'none';
+                printDiv.style.display = 'block';
+            });
+        });
+
+        window.addEventListener('afterprint', () => {
+            document.querySelectorAll('textarea.edit-input').forEach(textarea => {
+                textarea.style.display = 'block';
+                const printDiv = textarea.nextElementSibling;
+                if (printDiv && printDiv.classList.contains('print-mirror')) {
+                    printDiv.style.display = 'none';
+                }
+            });
+        });
+
+        function getNextInvoiceNo(currentInvoices) {
+            let maxNum = 1000;
+            currentInvoices.forEach(inv => {
+                const match = inv.invoiceNo.toString().match(/\d+/);
+                if (match) {
+                    const num = parseInt(match[0], 10);
+                    if (num > maxNum) maxNum = num;
+                }
+            });
+            return (maxNum + 1).toString();
+        }
+
+        function renderSidebar() {
+            const sidebarList = document.getElementById('sidebar-list');
+            if (invoices.length === 0) {
+                sidebarList.innerHTML = '<div class="p-4 text-slate-500 text-sm text-center">データがありません</div>';
+                return;
+            }
+
+            const html = invoices.map(inv => {
+                const isSelected = inv.id === currentId;
+                const total = inv.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
+                const statusClass = inv.status === '入金済' 
+                    ? 'bg-emerald-900/50 text-emerald-300 border-emerald-700 hover:bg-emerald-800' 
+                    : 'bg-amber-900/50 text-amber-300 border-amber-700 hover:bg-amber-800';
+                const selectedClass = isSelected ? 'bg-slate-800 border-l-4 border-l-blue-500' : 'hover:bg-slate-800 border-l-4 border-l-transparent';
+
+                return `
+                    <div onclick="setCurrentId('${inv.id}')" class="group p-4 border-b border-slate-800 cursor-pointer transition-colors relative ${selectedClass}">
+                        <div class="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onclick="handleDuplicate('${inv.id}', event)" class="p-1.5 bg-slate-700 hover:bg-blue-600 rounded text-slate-300 hover:text-white transition-colors shadow" title="複製する">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <button onclick="openDeleteModal('${inv.id}', event)" class="p-1.5 bg-slate-700 hover:bg-red-600 rounded text-slate-300 hover:text-white transition-colors shadow" title="削除する">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"></path></svg>
+                            </button>
+                        </div>
+                        <div class="flex justify-between items-center mb-1 pr-16">
+                            <span class="text-xs text-slate-400">${inv.date}</span>
+                            <button onclick="handleToggleStatus('${inv.id}', event)" class="text-xs px-2 py-0.5 rounded-full border transition-colors ${statusClass}">
+                                ${inv.status}
+                            </button>
+                        </div>
+                        <div class="font-medium text-sm truncate mb-1 pr-16">${inv.clientName}</div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-slate-400">#${inv.invoiceNo}</span>
+                            <span class="font-bold">¥${total.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            sidebarList.innerHTML = html;
+        }
+
+        function renderInvoice() {
+            const inv = invoices.find(i => i.id === currentId);
+            if (!inv) return;
+
+            const fields = ['clientName', 'subject', 'paymentDeadline', 'bankInfo', 'invoiceNo', 'date', 'publisherName', 'publisherZip', 'publisherAddress1', 'publisherAddress2', 'publisherTel', 'publisherEmail', 'note'];
+            fields.forEach(field => {
+                const el = document.getElementById(`inv-${field}`);
+                if (el) el.value = inv[field] || '';
+            });
+
+            renderItems(inv.items);
+            updateTotals(inv);
+        }
+
+        function renderItems(items) {
+            const tbody = document.getElementById('invoice-items');
+            tbody.innerHTML = items.map((item, index) => `
+                <tr class="group">
+                    <td class="border border-black p-1 relative">
+                        <input type="text" data-item-id="${item.id}" data-field="name" value="${item.name || ''}" class="edit-input text-center" placeholder="${index < 2 ? '項目名' : ''}" />
+                    </td>
+                    <td class="border border-black p-1">
+                        <input type="text" data-item-id="${item.id}" data-field="desc" value="${item.desc || ''}" class="edit-input" placeholder="${index < 2 ? '内容詳細' : ''}" />
+                    </td>
+                    <td class="border border-black p-1 relative">
+                        <input type="text" data-item-id="${item.id}" data-field="price" value="${item.price ? Number(item.price).toLocaleString() : ''}" class="edit-input text-right pr-8" placeholder="0" />
+                        
+                        <button onclick="removeItemRow(${item.id})" class="no-print absolute right-1 top-1/2 -translate-y-1/2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all z-10 bg-white" title="この行を削除">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function removeItemRow(itemId) {
+            const inv = invoices.find(i => i.id === currentId);
+            if (inv) {
+                inv.items = inv.items.filter(item => item.id !== itemId);
+                renderInvoice();
+            }
+        }
+
+        function updateTotals(inv) {
+            const total = inv.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+            document.getElementById('totalAmount1').innerText = total.toLocaleString() + ' -';
+            document.getElementById('totalAmount2').innerText = total.toLocaleString();
+            document.getElementById('totalAmount3').innerText = total.toLocaleString();
+        }
+
+        function setupInputListeners() {
+            document.getElementById('printable-invoice').addEventListener('input', (e) => {
+                const target = e.target;
+                const inv = invoices.find(i => i.id === currentId);
+                if (!inv) return;
+
+                if (target.name) {
+                    inv[target.name] = target.value;
+                } else if (target.hasAttribute('data-item-id')) {
+                    const itemId = parseInt(target.getAttribute('data-item-id'));
+                    const field = target.getAttribute('data-field');
+                    const item = inv.items.find(i => i.id === itemId);
+                    if (item) {
+                        if (field === 'price') {
+                            let rawValue = target.value.replace(/[^\d-]/g, '');
+                            item[field] = rawValue;
+                            if (rawValue !== '') {
+                                const formatted = Number(rawValue).toLocaleString();
+                                if (target.value !== formatted) {
+                                    target.value = formatted;
+                                }
+                            } else {
+                                target.value = '';
+                            }
+                        } else {
+                            item[field] = target.value;
+                        }
+                        updateTotals(inv);
+                    }
+                }
+                renderSidebar();
+            });
+        }
+
+        function setCurrentId(id) {
+            currentId = id;
+            renderSidebar();
+            renderInvoice();
+        }
+
+        function toggleSidebar() {
+            isSidebarOpen = !isSidebarOpen;
+            const sidebar = document.getElementById('sidebar');
+            if (isSidebarOpen) {
+                sidebar.classList.remove('w-0', 'overflow-hidden');
+                sidebar.classList.add('w-80');
+            } else {
+                sidebar.classList.remove('w-80');
+                sidebar.classList.add('w-0', 'overflow-hidden');
+            }
+        }
+
+        function handleCreateNew() {
+            const newId = Date.now().toString();
+            const newInvoice = JSON.parse(JSON.stringify(defaultTemplate));
+            newInvoice.id = newId;
+            newInvoice.invoiceNo = getNextInvoiceNo(invoices);
+            const today = new Date();
+            newInvoice.date = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+            invoices.unshift(newInvoice);
+            setCurrentId(newId);
+        }
+
+        function handleDuplicate(id, e) {
+            e.stopPropagation();
+            const sourceInvoice = invoices.find(inv => inv.id === id);
+            if (!sourceInvoice) return;
+
+            const newId = Date.now().toString();
+            const newInvoice = JSON.parse(JSON.stringify(sourceInvoice));
+            newInvoice.id = newId;
+            newInvoice.invoiceNo = getNextInvoiceNo(invoices);
+            newInvoice.status = '未入金';
+            const today = new Date();
+            newInvoice.date = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+            invoices.unshift(newInvoice);
+            setCurrentId(newId);
+        }
+
+        function handleToggleStatus(id, e) {
+            e.stopPropagation();
+            const inv = invoices.find(i => i.id === id);
+            if (inv) {
+                inv.status = inv.status === '未入金' ? '入金済' : '未入金';
+                renderSidebar();
+            }
+        }
+
+        function addItemRow() {
+            const inv = invoices.find(i => i.id === currentId);
+            if (inv) {
+                inv.items.push({ id: Date.now(), name: '', desc: '', price: '' });
+                renderInvoice();
+            }
+        }
+
+        // 汎用的なAPI通信関数（CORS回避のため text/plain で送信）
+        async function apiCall(action, data) {
+            const payload = { action: action, data: data };
+            try {
+                const response = await fetch(GAS_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify(payload)
+                });
+                return await response.json();
+            } catch (error) {
+                console.error("API Call Error:", error);
+                throw error;
+            }
+        }
+
+        async function handleSave() {
+            try {
+                localStorage.setItem('invoiceHubData', JSON.stringify(invoices));
+                
+                const currentInvoice = invoices.find(i => i.id === currentId);
+                const btn = document.getElementById('save-btn');
+                const originalBtnHtml = btn.innerHTML;
+                
+                btn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>保存中...`;
+                btn.disabled = true;
+
+                if (!GAS_API_URL || GAS_API_URL === 'YOUR_WEB_APP_URL_HERE') {
+                    setTimeout(() => {
+                        btn.innerHTML = originalBtnHtml;
+                        btn.disabled = false;
+                        alert("ブラウザ（ローカル）に保存しました。\n※スプレッドシートに保存するにはコード内の GAS_API_URL を設定してください。");
+                    }, 500);
+                    return;
+                }
+                
+                try {
+                    const result = await apiCall('saveInvoiceData', currentInvoice);
+                    if (result.status === 'success') {
+                        alert("内容をスプレッドシートに保存しました！");
+                    } else {
+                        throw new Error(result.message);
+                    }
+                } catch (error) {
+                    console.error(error);
+                    alert("スプレッドシートへの保存に失敗しました。");
+                } finally {
+                    btn.innerHTML = originalBtnHtml;
+                    btn.disabled = false;
+                }
+            } catch(e) {
+                alert("保存エラーが発生しました。");
+            }
+        }
+
+        // SheetJSを用いたExcelエクスポート機能（フロントエンド完結）
+        function exportToExcel() {
+            if (invoices.length === 0) {
+                alert("出力するデータがありません。");
+                return;
+            }
+            
+            // データをExcel用に整形
+            const exportData = invoices.map(inv => {
+                const total = inv.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+                return {
+                    '請求書No': inv.invoiceNo,
+                    '請求日': inv.date,
+                    'ステータス': inv.status,
+                    '宛名': inv.clientName,
+                    '件名': inv.subject,
+                    '支払期限': inv.paymentDeadline,
+                    '合計金額': total,
+                    '明細1内容': inv.items[0] ? inv.items[0].name : '',
+                    '備考': inv.note
+                };
+            });
+
+            // SheetJSでワークブックを作成してダウンロード
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "請求書一覧");
+            
+            XLSX.writeFile(workbook, "InvoiceList_" + new Date().getTime() + ".xlsx");
+        }
+
+        function openDeleteModal(id, e) {
+            e.stopPropagation();
+            deleteTargetId = id;
+            document.getElementById('deleteModal').classList.remove('hidden');
+        }
+
+        function closeDeleteModal() {
+            deleteTargetId = null;
+            document.getElementById('deleteModal').classList.add('hidden');
+        }
+
+        function executeDelete() {
+            if (!deleteTargetId) return;
+
+            invoices = invoices.filter(inv => inv.id !== deleteTargetId);
+            
+            if (invoices.length === 0) {
+                const newId = Date.now().toString();
+                const newInvoice = JSON.parse(JSON.stringify(defaultTemplate));
+                newInvoice.id = newId;
+                newInvoice.invoiceNo = getNextInvoiceNo(invoices);
+                const today = new Date();
+                newInvoice.date = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+                
+                invoices = [newInvoice];
+                currentId = newId;
+            } else {
+                if (currentId === deleteTargetId) currentId = invoices[0].id;
+            }
+            
+            closeDeleteModal();
+            renderSidebar();
+            renderInvoice();
+            localStorage.setItem('invoiceHubData', JSON.stringify(invoices));
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>
