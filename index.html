@@ -267,51 +267,78 @@
 
     <!-- JavaScript ロジック -->
     <script>
-        // --- 初期ダミーデータ（テンプレート） ---
+        // --- 新規作成用の空テンプレート（ダミーデータなし） ---
         const defaultTemplate = {
             id: '',
             status: '未入金',
-            clientName: '株式会社TONE PALETTE 御中',
-            subject: 'インフルエンサー施策 PR業務および動画制作',
-            paymentDeadline: '2026年3月31日',
-            bankInfo: '〇〇銀行 〇〇支店\n普通 1234567\n名義：〇〇 〇〇',
-            invoiceNo: '1001',
-            date: '2026年2月28日',
-            publisherName: 'ぱ',
-            publisherZip: '〒000-0000',
-            publisherAddress1: '東京都〇〇区〇〇 1-2-3',
-            publisherAddress2: '〇〇マンション 101',
-            publisherTel: 'TEL: 090-0000-0000',
-            publisherEmail: 'Email: sample@example.com',
+            clientName: '',
+            subject: '',
+            paymentDeadline: '',
+            bankInfo: '',
+            invoiceNo: '',
+            date: '',
+            publisherName: '',
+            publisherZip: '',
+            publisherAddress1: '',
+            publisherAddress2: '',
+            publisherTel: '',
+            publisherEmail: '',
             items: [
-                { id: 1, name: '基本PR料', desc: '想定5万再生、再生単価1円想定', price: '50000' },
-                { id: 2, name: '製作・作業費', desc: '動画1本、30秒以下尺想定', price: '20000' }
+                { id: 1, name: '', desc: '', price: '' }
             ],
-            note: '・本業務の報酬は税込金額となります。\n・振込手数料は貴社（株式会社TONE PALETTE様）にてご負担をお願いいたします。\n・お支払いは、請求書受領後、月末締め翌月末払いにてお願いいたします。'
+            note: ''
         };
-
-        const initialInvoices = [
-            { ...JSON.parse(JSON.stringify(defaultTemplate)), id: '1', invoiceNo: '1001', date: '2026年2月28日', status: '未入金' }
-        ];
 
         // --- ★ここに先ほど取得したGASのウェブアプリURLを貼り付けてください ---
         const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbzsZmAIIgiipxtM9cmPpdXsnPeUDO_H4qxf1t71eELV4oVg5LNLkZPZ39MlmWA_E5Dg/exec';
 
         let invoices = [];
-        let currentId = '1';
+        let currentId = null;
         let isSidebarOpen = true;
         let deleteTargetId = null;
 
-        function initApp() {
-            const savedData = localStorage.getItem('invoiceHubData');
-            if (savedData) {
-                try {
-                    invoices = JSON.parse(savedData);
-                    if (invoices.length > 0) currentId = invoices[0].id;
-                } catch (e) { invoices = [...initialInvoices]; }
-            } else {
-                invoices = [...initialInvoices];
+            async function initApp() {
+            // 初期表示用（読み込み中のスピナー表示）
+            document.getElementById('sidebar-list').innerHTML = '<div class="p-8 text-slate-400 text-sm text-center flex flex-col items-center justify-center h-full">データを読み込んでいます...<br><svg class="animate-spin mt-3 h-6 w-6 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>';
+            
+            if (!GAS_API_URL || GAS_API_URL === 'YOUR_WEB_APP_URL_HERE') {
+                document.getElementById('sidebar-list').innerHTML = '<div class="p-4 text-red-400 text-sm text-center">GAS_API_URLが設定されていません。<br>コードを修正してください。</div>';
+                return;
             }
+
+            try {
+                // スプレッドシートからデータを取得
+                const result = await apiCall('getInvoices', {});
+                
+                if (result.status === 'success' && result.data && result.data.length > 0) {
+                    invoices = result.data;
+                    currentId = invoices[0].id;
+                } else {
+                    invoices = [];
+                    // データが1件もない場合は空の新規データを作成
+                    const newId = Date.now().toString();
+                    const newInvoice = JSON.parse(JSON.stringify(defaultTemplate));
+                    newInvoice.id = newId;
+                    newInvoice.invoiceNo = '1001';
+                    const today = new Date();
+                    newInvoice.date = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
+                    invoices = [newInvoice];
+                    currentId = newId;
+                }
+            } catch (error) {
+                console.error("読み込みエラー:", error);
+                document.getElementById('sidebar-list').innerHTML = '<div class="p-4 text-red-400 text-sm text-center">データの取得に失敗しました。<br>通信状況を確認してください。</div>';
+                
+                // エラー時はローカルのキャッシュを使用するフォールバック
+                const savedData = localStorage.getItem('invoiceHubData');
+                if (savedData) {
+                    try {
+                        invoices = JSON.parse(savedData);
+                        if (invoices.length > 0) currentId = invoices[0].id;
+                    } catch (e) { invoices = []; }
+                }
+            }
+            
             renderSidebar();
             renderInvoice();
             setupInputListeners();
@@ -653,7 +680,7 @@
                 const newId = Date.now().toString();
                 const newInvoice = JSON.parse(JSON.stringify(defaultTemplate));
                 newInvoice.id = newId;
-                newInvoice.invoiceNo = getNextInvoiceNo(invoices);
+                newInvoice.invoiceNo = '1001';
                 const today = new Date();
                 newInvoice.date = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
                 
