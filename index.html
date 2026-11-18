@@ -218,17 +218,18 @@
                     </tbody>
                 </table>
 
-                <!-- 合計計算エリア -->
-                <div class="flex justify-end mb-10 relative">
-                    <!-- 源泉徴収チェックボックス (印刷時は非表示になります) -->
-                    <div class="absolute -left-36 top-0 no-print flex items-center">
+               <!-- 合計計算エリア -->
+                <div class="flex justify-between items-end mb-10">
+                    <!-- 左側: 源泉徴収チェックボックス (印刷時は非表示になります) -->
+                    <div class="no-print">
                         <label class="flex items-center gap-2 text-sm cursor-pointer p-2 hover:bg-gray-100 rounded border border-gray-300 bg-white shadow-sm transition-colors">
                             <input type="checkbox" id="inv-isWithholdingTax" name="isWithholdingTax" class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer">
                             <span class="font-medium text-gray-700 text-xs whitespace-nowrap">源泉徴収を計算</span>
                         </label>
                     </div>
 
-                    <table class="w-[45%] text-sm border-collapse border border-black bg-white relative z-10">
+                    <!-- 右側: 合計テーブル -->
+                    <table class="w-[45%] text-sm border-collapse border border-black bg-white">
                         <tbody>
                             <tr>
                                 <th class="border border-black bg-gray-100 p-2 text-center w-[45%] font-normal">小計</th>
