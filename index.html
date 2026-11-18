@@ -219,19 +219,32 @@
                 </table>
 
                 <!-- 合計計算エリア -->
-                <div class="flex justify-end mb-10">
-                    <table class="w-[40%] text-sm border-collapse border border-black">
+                <div class="flex justify-end mb-10 relative">
+                    <!-- 源泉徴収チェックボックス (印刷時は非表示になります) -->
+                    <div class="absolute -left-36 top-0 no-print flex items-center">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer p-2 hover:bg-gray-100 rounded border border-gray-300 bg-white shadow-sm transition-colors">
+                            <input type="checkbox" id="inv-isWithholdingTax" name="isWithholdingTax" class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer">
+                            <span class="font-medium text-gray-700 text-xs whitespace-nowrap">源泉徴収を計算</span>
+                        </label>
+                    </div>
+
+                    <table class="w-[45%] text-sm border-collapse border border-black bg-white relative z-10">
                         <tbody>
                             <tr>
-                                <th class="border border-black bg-gray-100 p-2 text-center w-1/2 font-normal">小計</th>
+                                <th class="border border-black bg-gray-100 p-2 text-center w-[45%] font-normal">小計</th>
                                 <td id="totalAmount2" class="border border-black p-2 text-right">0</td>
                             </tr>
                             <tr>
                                 <th class="border border-black bg-gray-100 p-2 text-center font-normal">消費税等</th>
                                 <td class="border border-black p-2 text-right text-gray-500 text-xs text-center">内税のため0</td>
                             </tr>
+                            <!-- 源泉徴収行 (チェックを入れた時だけJSで表示されます) -->
+                            <tr id="withholdingTaxRow" class="hidden">
+                                <th class="border border-black bg-gray-100 p-2 text-center font-normal">源泉徴収高</th>
+                                <td id="withholdingTaxAmount" class="border border-black p-2 text-right text-red-600 font-medium">0</td>
+                            </tr>
                             <tr>
-                                <th class="border border-black bg-gray-100 p-2 text-center font-bold">合計</th>
+                                <th class="border border-black bg-gray-100 p-2 text-center font-bold">請求額</th>
                                 <td id="totalAmount3" class="border border-black p-2 text-right font-bold">0</td>
                             </tr>
                         </tbody>
@@ -270,7 +283,7 @@
 
     <!-- JavaScript ロジック -->
     <script>
-        // --- 新規作成用の空テンプレート（ダミーデータなし） ---
+        // --- 新規作成用の空テンプレート（ダミーデータなし・源泉徴収フラグ追加） ---
         const defaultTemplate = {
             id: '',
             status: '未入金',
@@ -289,7 +302,8 @@
             items: [
                 { id: 1, name: '', desc: '', price: '' }
             ],
-            note: ''
+            note: '',
+            isWithholdingTax: false
         };
 
         // --- ★ここに先ほど取得したGASのウェブアプリURLを貼り付けてください ---
@@ -513,6 +527,12 @@
                 const el = document.getElementById(`inv-${field}`);
                 if (el) el.value = inv[field] || '';
             });
+            
+            // 源泉徴収チェックボックスの状態を反映
+            const checkboxEl = document.getElementById('inv-isWithholdingTax');
+            if (checkboxEl) {
+                checkboxEl.checked = !!inv.isWithholdingTax;
+            }
 
             renderItems(inv.items);
             updateTotals(inv);
@@ -548,11 +568,35 @@
             }
         }
 
-        function updateTotals(inv) {
+      function updateTotals(inv) {
             const total = inv.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
-            document.getElementById('totalAmount1').innerText = total.toLocaleString() + ' -';
+            
+            // ★ 源泉徴収税の計算
+            let withholdingTax = 0;
+            if (inv.isWithholdingTax) {
+                if (total <= 1000000) {
+                    withholdingTax = Math.floor(total * 0.1021);
+                } else {
+                    withholdingTax = Math.floor((total - 1000000) * 0.2042) + 102100;
+                }
+            }
+            
+            // ★ 差引請求額
+            const finalAmount = total - withholdingTax;
+
+            document.getElementById('totalAmount1').innerText = finalAmount.toLocaleString() + ' -';
             document.getElementById('totalAmount2').innerText = total.toLocaleString();
-            document.getElementById('totalAmount3').innerText = total.toLocaleString();
+            
+            // 源泉徴収行の表示制御
+            const taxRow = document.getElementById('withholdingTaxRow');
+            if (inv.isWithholdingTax) {
+                taxRow.classList.remove('hidden');
+                document.getElementById('withholdingTaxAmount').innerText = '(' + withholdingTax.toLocaleString() + ')';
+            } else {
+                taxRow.classList.add('hidden');
+            }
+            
+            document.getElementById('totalAmount3').innerText = finalAmount.toLocaleString();
         }
 
         function setupInputListeners() {
@@ -562,7 +606,13 @@
                 if (!inv) return;
 
                 if (target.name) {
-                    inv[target.name] = target.value;
+                    // ★ チェックボックスの場合は checked プロパティを保存
+                    if (target.type === 'checkbox') {
+                        inv[target.name] = target.checked;
+                        updateTotals(inv);
+                    } else {
+                        inv[target.name] = target.value;
+                    }
                 } else if (target.hasAttribute('data-item-id')) {
                     const itemId = parseInt(target.getAttribute('data-item-id'));
                     const field = target.getAttribute('data-field');
@@ -586,7 +636,6 @@
                     }
                 }
                 renderSidebar();
-                scheduleAutoSave(currentId);
             });
         }
 
