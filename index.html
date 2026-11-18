@@ -502,14 +502,14 @@
                             </button>
                         </div>
                         <div class="flex justify-between items-center mb-1 pr-16">
-                            <span class="text-xs text-slate-400">${inv.date}</span>
+                            <span class="text-xs text-slate-400">${esc(inv.date)}</span>
                             <button onclick="handleToggleStatus('${inv.id}', event)" class="text-xs px-2 py-0.5 rounded-full border transition-colors ${statusClass}">
-                                ${inv.status}
+                                ${esc(inv.status)}
                             </button>
                         </div>
-                        <div class="font-medium text-sm truncate mb-1 pr-16">${inv.clientName}</div>
+                        <div class="font-medium text-sm truncate mb-1 pr-16">${esc(inv.clientName)}</div>
                         <div class="flex justify-between items-center text-sm">
-                            <span class="text-slate-400">#${inv.invoiceNo}</span>
+                            <span class="text-slate-400">#${esc(inv.invoiceNo)}</span>
                             <span class="font-bold">¥${total.toLocaleString()}</span>
                         </div>
                     </div>
@@ -519,6 +519,10 @@
             sidebarList.innerHTML = html;
         }
 
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+        
         function renderInvoice() {
             const inv = invoices.find(i => i.id === currentId);
             if (!inv) return;
@@ -544,10 +548,10 @@
             tbody.innerHTML = items.map((item, index) => `
                 <tr class="group">
                     <td class="border border-black p-1 relative">
-                        <input type="text" data-item-id="${item.id}" data-field="name" value="${item.name || ''}" class="edit-input text-center" placeholder="${index < 2 ? '項目名' : ''}" />
+                        <input type="text" data-item-id="${item.id}" data-field="name" value="${esc(item.name)}" class="edit-input text-center" placeholder="${index < 2 ? '項目名' : ''}" />
                     </td>
                     <td class="border border-black p-1">
-                        <input type="text" data-item-id="${item.id}" data-field="desc" value="${item.desc || ''}" class="edit-input" placeholder="${index < 2 ? '内容詳細' : ''}" />
+                        <input type="text" data-item-id="${item.id}" data-field="desc" value="${esc(item.desc)}" class="edit-input" placeholder="${index < 2 ? '内容詳細' : ''}" />
                     </td>
                     <td class="border border-black p-1 relative">
                         <input type="text" data-item-id="${item.id}" data-field="price" value="${item.price ? Number(item.price).toLocaleString() : ''}" class="edit-input text-right pr-8" placeholder="0" />
@@ -637,6 +641,7 @@
                     }
                 }
                 renderSidebar();
+                scheduleAutoSave(currentId);   // ← この1行だけ追加
             });
         }
 
@@ -699,8 +704,10 @@
         function addItemRow() {
             const inv = invoices.find(i => i.id === currentId);
             if (inv) {
+                if (inv.items.length >= 5) { alert('明細は5行までです'); return; }
                 inv.items.push({ id: Date.now(), name: '', desc: '', price: '' });
                 renderInvoice();
+                scheduleAutoSave(currentId);   // ← 追加
             }
         }
 
@@ -768,9 +775,17 @@
             document.getElementById('deleteModal').classList.add('hidden');
         }
 
-        function executeDelete() {
+        async function executeDelete() {
             if (!deleteTargetId) return;
-
+        
+            try {
+                const r = await apiCall('deleteInvoice', deleteTargetId);
+                if (r.status !== 'success') throw new Error(r.message);
+            } catch (e) {
+                alert('削除に失敗しました。通信状況を確認してください。');
+                return;
+            }
+            dirtyIds.delete(deleteTargetId);
             invoices = invoices.filter(inv => inv.id !== deleteTargetId);
             
             if (invoices.length === 0) {
