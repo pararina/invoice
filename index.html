@@ -210,7 +210,7 @@
                         <tr class="bg-gray-100 text-center">
                             <th class="border border-black p-2 w-[25%] font-normal">項目</th>
                             <th class="border border-black p-2 w-[55%] font-normal">内容・備考</th>
-                            <th class="border border-black p-2 w-[20%] font-normal">金額（税込）</th>
+                            <th id="priceHeader" class="border border-black p-2 w-[20%] font-normal">金額（税込）</th>
                         </tr>
                     </thead>
                     <tbody id="invoice-items">
@@ -221,7 +221,11 @@
                <!-- 合計計算エリア -->
                 <div class="flex justify-between items-end mb-10">
                     <!-- 左側: 源泉徴収チェックボックス (印刷時は非表示になります) -->
-                    <div class="no-print">
+                    <div class="no-print flex flex-col gap-2">
+                        <select id="inv-taxMode" name="taxMode" class="text-xs border border-gray-300 rounded p-2 bg-white shadow-sm cursor-pointer">
+                            <option value="inclusive">内税（税込で入力）</option>
+                            <option value="exclusive">外税（税抜で入力・消費税10%加算）</option>
+                        </select>
                         <label class="flex items-center gap-2 text-sm cursor-pointer p-2 hover:bg-gray-100 rounded border border-gray-300 bg-white shadow-sm transition-colors">
                             <input type="checkbox" id="inv-isWithholdingTax" name="isWithholdingTax" class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer">
                             <span class="font-medium text-gray-700 text-xs whitespace-nowrap">源泉徴収を計算</span>
@@ -236,8 +240,8 @@
                                 <td id="totalAmount2" class="border border-black p-2 text-right">0</td>
                             </tr>
                             <tr>
-                                <th class="border border-black bg-gray-100 p-2 text-center font-normal">消費税等</th>
-                                <td class="border border-black p-2 text-right text-gray-500 text-xs text-center">内税のため0</td>
+                                <th id="taxLabel" class="border border-black bg-gray-100 p-2 text-center font-normal">消費税等</th>
+                                <td id="taxCell" class="border border-black p-2 text-right text-gray-500 text-xs text-center">内税のため0</td>
                             </tr>
                             <!-- 源泉徴収行 (チェックを入れた時だけJSで表示されます) -->
                             <tr id="withholdingTaxRow" class="hidden">
@@ -304,7 +308,8 @@
                 { id: 1, name: '', desc: '', price: '' }
             ],
             note: '',
-            isWithholdingTax: false
+            isWithholdingTax: false,
+            taxMode: 'inclusive'
         };
 
         // --- ★ここに先ほど取得したGASのウェブアプリURLを貼り付けてください ---
@@ -485,7 +490,7 @@
 
             const html = invoices.map(inv => {
                 const isSelected = inv.id === currentId;
-                const total = inv.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
+                const total = calcTotals(inv).gross;
                 const statusClass = inv.status === '入金済' 
                     ? 'bg-emerald-900/50 text-emerald-300 border-emerald-700 hover:bg-emerald-800' 
                     : 'bg-amber-900/50 text-amber-300 border-amber-700 hover:bg-amber-800';
@@ -538,6 +543,8 @@
             if (checkboxEl) {
                 checkboxEl.checked = !!inv.isWithholdingTax;
             }
+            const taxModeEl = document.getElementById('inv-taxMode');
+            if (taxModeEl) taxModeEl.value = inv.taxMode || 'inclusive';
 
             renderItems(inv.items);
             updateTotals(inv);
@@ -573,37 +580,46 @@
             }
         }
 
-      function updateTotals(inv) {
-            const total = inv.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
-            
-            // ★ 源泉徴収税の計算
-            let withholdingTax = 0;
+        function calcTotals(inv) {
+            const subtotal = inv.items.reduce((s, i) => s + (Number(i.price) || 0), 0);
+            const isExcl = inv.taxMode === 'exclusive';
+            const tax = isExcl ? Math.floor(subtotal * 0.1) : 0;   // 四捨五入にするなら Math.round
+            const gross = subtotal + tax;
+            let withholding = 0;
             if (inv.isWithholdingTax) {
-                if (total <= 1000000) {
-                    withholdingTax = Math.floor(total * 0.1021);
-                } else {
-                    withholdingTax = Math.floor((total - 1000000) * 0.2042) + 102100;
-                }
+                withholding = subtotal <= 1000000
+                    ? Math.floor(subtotal * 0.1021)
+                    : Math.floor((subtotal - 1000000) * 0.2042) + 102100;
             }
-            
-            // ★ 差引請求額
-            const finalAmount = total - withholdingTax;
-
-            document.getElementById('totalAmount1').innerText = finalAmount.toLocaleString() + ' -';
-            document.getElementById('totalAmount2').innerText = total.toLocaleString();
-            
+            return { subtotal, tax, gross, withholding, final: gross - withholding };
+        }
+      function updateTotals(inv) {
+            const t = calcTotals(inv);
+            const isExcl = inv.taxMode === 'exclusive';
+        
+            document.getElementById('totalAmount1').innerText = t.final.toLocaleString() + ' -';
+            document.getElementById('totalAmount2').innerText = t.subtotal.toLocaleString();
+            document.getElementById('totalAmount3').innerText = t.final.toLocaleString();
+        
+            // 消費税の行・列見出しを内税/外税で切り替え
+            const taxCell = document.getElementById('taxCell');
+            taxCell.innerText = isExcl ? t.tax.toLocaleString() : '内税のため0';
+            taxCell.className = isExcl
+                ? 'border border-black p-2 text-right'
+                : 'border border-black p-2 text-right text-gray-500 text-xs text-center';
+            document.getElementById('taxLabel').innerText = isExcl ? '消費税（10%）' : '消費税等';
+            document.getElementById('priceHeader').innerText = isExcl ? '金額（税抜）' : '金額（税込）';
+        
             // 源泉徴収行の表示制御
             const taxRow = document.getElementById('withholdingTaxRow');
             if (inv.isWithholdingTax) {
                 taxRow.classList.remove('hidden');
-                document.getElementById('withholdingTaxAmount').innerText = '(' + withholdingTax.toLocaleString() + ')';
+                document.getElementById('withholdingTaxAmount').innerText = '(' + t.withholding.toLocaleString() + ')';
             } else {
                 taxRow.classList.add('hidden');
             }
-            
-            document.getElementById('totalAmount3').innerText = finalAmount.toLocaleString();
         }
-
+        
         function setupInputListeners() {
             document.getElementById('printable-invoice').addEventListener('input', (e) => {
                 const target = e.target;
@@ -614,6 +630,9 @@
                     // ★ チェックボックスの場合は checked プロパティを保存
                     if (target.type === 'checkbox') {
                         inv[target.name] = target.checked;
+                        updateTotals(inv);
+                    } else if (target.name === 'taxMode') {
+                        inv[target.name] = target.value;
                         updateTotals(inv);
                     } else {
                         inv[target.name] = target.value;
@@ -742,7 +761,7 @@
             
             // データをExcel用に整形
             const exportData = invoices.map(inv => {
-                const total = inv.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+                const total = calcTotals(inv).gross;
                 return {
                     '請求書No': inv.invoiceNo,
                     '請求日': inv.date,
