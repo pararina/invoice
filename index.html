@@ -134,7 +134,7 @@
                     <div class="w-[60%]">
                         <!-- ★修正: 宛名の横幅を大きく広げました (w-fullに変更) -->
                         <div class="mb-8 border-b border-black w-full pb-1">
-                            <input type="text" id="inv-clientName" name="clientName" class="edit-input text-xl font-bold" />
+                            <textarea id="inv-clientName" name="clientName" rows="3" class="edit-input text-base font-bold resize-none overflow-hidden leading-snug"></textarea>
                         </div>
                         <p class="text-sm mb-4">下記のとおり、御請求申し上げます。</p>
                         
@@ -156,7 +156,7 @@
                                     <th class="border border-black bg-gray-100 p-2 text-left font-normal align-top">振込先</th>
                                     <td class="border border-black p-2 relative">
                                         <!-- textareaのトリミング防止対策の対象 -->
-                                        <textarea id="inv-bankInfo" name="bankInfo" rows="3" class="edit-input resize-none leading-relaxed"></textarea>
+                                        <textarea id="inv-bankInfo" name="bankInfo" rows="3" class="edit-input resize-none overflow-hidden leading-relaxed"></textarea>
                                     </td>
                                 </tr>
                             </tbody>
@@ -260,7 +260,7 @@
                 <div class="text-sm border border-black p-2 min-h-[120px] relative">
                     <div class="font-bold mb-1 px-2">備考</div>
                     <!-- textareaのトリミング防止対策の対象 -->
-                    <textarea id="inv-note" name="note" rows="4" class="edit-input resize-none leading-relaxed px-2 w-[calc(100%-16px)] mx-2"></textarea>
+                    <textarea id="inv-note" name="note" rows="4" class="edit-input resize-none overflow-hidden leading-relaxed px-2 w-[calc(100%-16px)] mx-2"></textarea>
                 </div>
 
             </div>
@@ -528,6 +528,11 @@
             return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
         
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = (el.scrollHeight + 2) + 'px';   // +2 は上下の枠線分
+        }
+        
         function renderInvoice() {
             const inv = invoices.find(i => i.id === currentId);
             if (!inv) return;
@@ -548,6 +553,7 @@
 
             renderItems(inv.items);
             updateTotals(inv);
+            document.querySelectorAll('#printable-invoice textarea').forEach(autoResize);
         }
 
         function renderItems(items) {
@@ -623,6 +629,7 @@
         function setupInputListeners() {
             document.getElementById('printable-invoice').addEventListener('input', (e) => {
                 const target = e.target;
+                if (target.tagName === 'TEXTAREA') autoResize(target);
                 const inv = invoices.find(i => i.id === currentId);
                 if (!inv) return;
 
