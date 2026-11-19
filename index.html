@@ -512,7 +512,7 @@
                                 ${esc(inv.status)}
                             </button>
                         </div>
-                        <div class="font-medium text-sm truncate mb-1 pr-16">${esc(inv.clientName)}</div>
+                        <div class="font-medium text-sm truncate mb-1 pr-16">${esc((inv.clientName || '').split('\n')[0])}</div>
                         <div class="flex justify-between items-center text-sm">
                             <span class="text-slate-400">#${esc(inv.invoiceNo)}</span>
                             <span class="font-bold">¥${total.toLocaleString()}</span>
